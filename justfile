@@ -1,2 +1,2 @@
-watch:
+dev:
   cargo watch -x run

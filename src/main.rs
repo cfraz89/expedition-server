@@ -37,7 +37,7 @@ async fn main() -> color_eyre::Result<()> {
         password: "root",
     })
     .await?;
-    db.use_ns("ausadv").use_db("ausadv").await?;
+    db.use_ns("expedition").use_db("expedition").await?;
     DB.set(db).unwrap();
 
     // build our application with a route
