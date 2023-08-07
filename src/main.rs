@@ -1,7 +1,7 @@
 mod net;
 
 use axum::{
-    extract::Multipart,
+    extract::{Multipart, Path},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -41,9 +41,9 @@ async fn main() -> color_eyre::Result<()> {
 
     // build our application with a route
     let app = Router::new()
-        // `GET /` goes to `root`
+        .route("/gpx", post(import_gpx))
         .route("/rides", get(get_rides))
-        .route("/gpx", post(import_gpx));
+        .route("/rides/:id", get(get_ride_by_id));
 
     // run our app with hyper, listening globally on port 3000
     axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
@@ -65,6 +65,12 @@ async fn get_rides() -> Result<Json<Vec<serde_json::Value>>> {
         .await?;
     let ride_names: Vec<serde_json::Value> = rides.take(0)?;
     Ok(Json(ride_names))
+}
+
+async fn get_ride_by_id(Path(ride_id): Path<String>) -> Result<Json<Ride>> {
+    let option_ride: Option<Ride> = get_db()?.select(("rides", ride_id)).await?;
+    let ride = option_ride.ok_or(ResponseError::not_found("No ride with this id"))?;
+    Ok(Json(ride))
 }
 
 async fn import_gpx(mut multipart: Multipart) -> Result<impl IntoResponse> {

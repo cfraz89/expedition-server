@@ -40,6 +40,13 @@ impl ResponseError {
     {
         ResponseError((StatusCode::INTERNAL_SERVER_ERROR, data).into_response())
     }
+
+    pub fn not_found<T>(data: T) -> Self
+    where
+        (StatusCode, T): IntoResponse,
+    {
+        ResponseError((StatusCode::NOT_FOUND, data).into_response())
+    }
 }
 
 pub type Result<T, E = ResponseError> = axum::response::Result<T, E>;
