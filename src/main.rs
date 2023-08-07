@@ -3,20 +3,18 @@ mod net;
 use axum::{
     extract::{Multipart, Path},
     http::StatusCode,
-    response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use geo_types::Coord;
 use geojson::{GeoJson, JsonObject};
-use gpx::{Gpx, TrackSegment, Waypoint};
 use net::response::{ResponseError, Result};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use surrealdb::{
     engine::remote::ws::{Client, Ws},
     opt::auth::Root,
-    sql::{Id, Thing},
+    sql::Thing,
     Surreal,
 };
 use tower_http::cors::CorsLayer;
@@ -47,6 +45,7 @@ async fn main() -> color_eyre::Result<()> {
         .route("/gpx", post(import_gpx))
         .route("/rides", get(get_rides))
         .route("/rides/:id", get(get_ride_by_id))
+        .route("/rides/:id", delete(delete_ride_by_id))
         .layer(CorsLayer::permissive());
 
     // run our app with hyper, listening globally on port 3000
@@ -64,14 +63,6 @@ struct Ride {
     geo_json: GeoJson,
 }
 
-// struct RideGeo {
-//     geo_json: GeoJson,
-//     min_x: Option<f64>,
-//     min_y: Option<f64>,
-//     max_x: Option<f64>,
-//     max_y: Option<f64>,
-// }
-
 async fn get_rides() -> Result<Json<Vec<serde_json::Value>>> {
     let mut rides = get_db()?
         .query("select meta::id(id) as id, name from rides")
@@ -86,7 +77,13 @@ async fn get_ride_by_id(Path(ride_id): Path<String>) -> Result<Json<Ride>> {
     Ok(Json(ride))
 }
 
-async fn import_gpx(mut multipart: Multipart) -> Result<impl IntoResponse> {
+async fn delete_ride_by_id(Path(ride_id): Path<String>) -> Result<()> {
+    let ride: Option<Ride> = get_db()?.delete(("rides", ride_id)).await?;
+    ride.map(|_| ())
+        .ok_or(ResponseError::not_found("no ride with this id"))
+}
+
+async fn import_gpx(mut multipart: Multipart) -> Result<()> {
     let mut geo_json_opt: Option<GeoJson> = None;
     let mut ride_name_opt: Option<String> = None;
     while let Some(field) = multipart.next_field().await? {
@@ -143,7 +140,7 @@ async fn import_gpx(mut multipart: Multipart) -> Result<impl IntoResponse> {
         })
         .await?;
 
-    Ok("ok")
+    Ok(())
 }
 
 fn get_bounding_box(multi_line_string: &geo_types::MultiLineString) -> Option<Vec<f64>> {
