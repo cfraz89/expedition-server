@@ -1,2 +1,4 @@
+set dotenv-load
+
 dev:
-  cargo watch -x run
+  RUST_LOG=debug cargo watch -x run
