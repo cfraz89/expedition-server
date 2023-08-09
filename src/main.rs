@@ -1,5 +1,6 @@
-mod lib;
+mod import;
 mod net;
+mod ride_geo;
 mod types;
 
 use axum::{
@@ -8,25 +9,19 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
-use geo::algorithm::vincenty_distance::VincentyDistance;
-use geo_types::Point;
-use geojson::{GeoJson, JsonObject};
+use geojson::GeoJson;
 use google_maps::prelude::*;
-use lib::gpx;
 use net::response::{ResponseError, Result};
-use serde::{Deserialize, Serialize};
+use ride_geo::{Distance, IntoRideGeoJson};
 use std::sync::OnceLock;
 use surrealdb::{
     engine::remote::ws::{Client, Ws},
     opt::auth::Root,
-    sql::Thing,
     Surreal,
 };
 use tower_http::cors::CorsLayer;
-use tracing::{info, instrument};
-use types::ride::{self, Ride};
-
-use crate::lib::gpx::gpx_to_geojson;
+use tracing::instrument;
+use types::ride::Ride;
 
 static DB: OnceLock<Surreal<Client>> = OnceLock::new();
 static GMAPS: OnceLock<GoogleMapsClient> = OnceLock::new();
@@ -114,8 +109,8 @@ async fn import_gpx(mut multipart: Multipart) -> Result<()> {
         match name {
             "ride_name" => ride_name_opt = Some(field.text().await?),
             "gpx" => {
-                let text = field.text().await?;
-                geo_json_opt = Some(gpx_to_geojson(text)?);
+                let gpx_obj = gpx::read(field.text().await?.as_bytes())?;
+                geo_json_opt = Some(gpx_obj.into_ride_geo_json()?);
             }
             _ => continue,
         }
@@ -128,13 +123,14 @@ async fn import_gpx(mut multipart: Multipart) -> Result<()> {
         StatusCode::BAD_REQUEST,
         "gpx not provided",
     ))?;
+    let total_distance = geo_json.distance();
     let _ride: Ride = get_db()?
         .create("rides")
         .content(Ride {
             id: None,
             name: ride_name,
             geo_json,
-            total_distance: 0.0,
+            total_distance,
         })
         .await?;
 
