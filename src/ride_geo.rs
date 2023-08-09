@@ -1,7 +1,7 @@
 use color_eyre::eyre::Result;
 use geo::{BoundingRect, VincentyDistance};
 use geo_types::{CoordFloat, CoordNum, LineString, MultiLineString, MultiPoint, Point};
-use geojson::{Feature, GeoJson};
+use geojson::{Feature, FeatureCollection, GeoJson, Geometry};
 
 use crate::types::feature::FeatureProperties;
 
@@ -20,7 +20,7 @@ where
 {
     fn into_ride_feature(&'a self) -> Result<Feature> {
         let bounding_box = self.bounding_box();
-        let geom = geojson::Geometry {
+        let geom = Geometry {
             bbox: bounding_box.to_owned(),
             value: <&'a S as Into<geojson::Value>>::into(self),
             foreign_members: None,
@@ -116,19 +116,19 @@ impl Distance<f64> for geojson::Value {
     }
 }
 
-impl Distance<f64> for geojson::Geometry {
+impl Distance<f64> for Geometry {
     fn distance(&self) -> f64 {
         self.value.distance()
     }
 }
 
-impl Distance<f64> for geojson::Feature {
+impl Distance<f64> for Feature {
     fn distance(&self) -> f64 {
         self.geometry.as_ref().map_or(0.0, |geom| geom.distance())
     }
 }
 
-impl Distance<f64> for geojson::FeatureCollection {
+impl Distance<f64> for FeatureCollection {
     fn distance(&self) -> f64 {
         self.into_iter().map(|feat| feat.distance()).sum()
     }
@@ -140,6 +140,126 @@ impl Distance<f64> for GeoJson {
             GeoJson::Geometry(geom) => geom.distance(),
             GeoJson::Feature(feat) => feat.distance(),
             GeoJson::FeatureCollection(fc) => fc.distance(),
+        }
+    }
+}
+
+pub trait StartPoint {
+    fn start_point(&self) -> Option<Point>;
+}
+
+impl StartPoint for geojson::Value {
+    fn start_point(&self) -> Option<Point> {
+        match self {
+            geojson::Value::Point(_) => Some(geo_types::Point::try_from(self).unwrap()),
+            geojson::Value::MultiPoint(_) => geo_types::MultiPoint::try_from(self)
+                .unwrap()
+                .0
+                .clone()
+                .first()
+                .copied(),
+            geojson::Value::LineString(_) => geo_types::LineString::try_from(self)
+                .unwrap()
+                .points()
+                .next(),
+            geojson::Value::MultiLineString(_) => geo_types::MultiLineString::try_from(self)
+                .unwrap()
+                .iter()
+                .next()?
+                .points()
+                .next(),
+            geojson::Value::Polygon(_) => None,
+            geojson::Value::MultiPolygon(_) => None,
+            geojson::Value::GeometryCollection(geoms) => geoms.iter().next()?.start_point(),
+        }
+    }
+}
+
+impl StartPoint for Geometry {
+    fn start_point(&self) -> Option<Point> {
+        self.value.start_point()
+    }
+}
+
+impl StartPoint for Feature {
+    fn start_point(&self) -> Option<Point> {
+        let geo = self.geometry.as_ref()?;
+        geo.start_point()
+    }
+}
+
+impl StartPoint for FeatureCollection {
+    fn start_point(&self) -> Option<Point> {
+        self.into_iter().next()?.start_point()
+    }
+}
+
+impl StartPoint for GeoJson {
+    fn start_point(&self) -> Option<Point> {
+        match self {
+            GeoJson::Geometry(geom) => geom.start_point(),
+            GeoJson::Feature(feat) => feat.start_point(),
+            GeoJson::FeatureCollection(fc) => fc.start_point(),
+        }
+    }
+}
+
+pub trait EndPoint {
+    fn end_point(&self) -> Option<Point>;
+}
+
+impl EndPoint for geojson::Value {
+    fn end_point(&self) -> Option<Point> {
+        match self {
+            geojson::Value::Point(_) => Some(geo_types::Point::try_from(self).unwrap()),
+            geojson::Value::MultiPoint(_) => geo_types::MultiPoint::try_from(self)
+                .unwrap()
+                .0
+                .clone()
+                .last()
+                .copied(),
+            geojson::Value::LineString(_) => geo_types::LineString::try_from(self)
+                .unwrap()
+                .points()
+                .last(),
+            geojson::Value::MultiLineString(_) => geo_types::MultiLineString::try_from(self)
+                .unwrap()
+                .iter()
+                .last()?
+                .points()
+                .last(),
+            geojson::Value::Polygon(_) => None,
+            geojson::Value::MultiPolygon(_) => None,
+            geojson::Value::GeometryCollection(geoms) => geoms.iter().last()?.end_point(),
+        }
+    }
+}
+
+impl EndPoint for Geometry {
+    fn end_point(&self) -> Option<Point> {
+        self.value.end_point()
+    }
+}
+
+impl EndPoint for Feature {
+    fn end_point(&self) -> Option<Point> {
+        let geo = self.geometry.as_ref()?;
+        geo.end_point()
+    }
+}
+
+impl EndPoint for FeatureCollection {
+    fn end_point(&self) -> Option<Point> {
+        self.into_iter().next()?.end_point()
+    }
+}
+
+impl EndPoint for GeoJson {
+    fn end_point(&self) -> Option<Point> {
+        match self {
+            GeoJson::Geometry(geom) => geom.end_point(),
+            GeoJson::Feature(feat) => feat.end_point(),
+            GeoJson::FeatureCollection(fc) => fc.end_point(),
         }
     }
 }

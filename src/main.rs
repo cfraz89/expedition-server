@@ -1,5 +1,7 @@
+mod clients;
 mod import;
 mod net;
+mod ride;
 mod ride_geo;
 mod types;
 
@@ -9,22 +11,16 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
+use clients::{get_db, DB, GMAPS};
 use geojson::GeoJson;
-use google_maps::prelude::*;
+use google_maps::GoogleMapsClient;
 use net::response::{ResponseError, Result};
-use ride_geo::{Distance, IntoRideGeoJson};
-use std::sync::OnceLock;
-use surrealdb::{
-    engine::remote::ws::{Client, Ws},
-    opt::auth::Root,
-    Surreal,
-};
+use ride::create_ride;
+use ride_geo::IntoRideGeoJson;
+use surrealdb::{engine::remote::ws::Ws, opt::auth::Root, Surreal};
 use tower_http::cors::CorsLayer;
 use tracing::instrument;
 use types::ride::Ride;
-
-static DB: OnceLock<Surreal<Client>> = OnceLock::new();
-static GMAPS: OnceLock<GoogleMapsClient> = OnceLock::new();
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -73,14 +69,9 @@ fn init_google_maps() -> color_eyre::Result<()> {
     Ok(())
 }
 
-fn get_db() -> Result<&'static Surreal<Client>> {
-    DB.get()
-        .ok_or(ResponseError::internal_server_error("Failed to get db"))
-}
-
 async fn get_rides() -> Result<Json<Vec<serde_json::Value>>> {
     let mut rides = get_db()?
-        .query("select meta::id(id) as id, name, total_distance from rides")
+        .query("select meta::id(id) as id, name, total_distance, start_address, end_address from rides")
         .await?;
     let ride_names: Vec<serde_json::Value> = rides.take(0)?;
     Ok(Json(ride_names))
@@ -123,16 +114,8 @@ async fn import_gpx(mut multipart: Multipart) -> Result<()> {
         StatusCode::BAD_REQUEST,
         "gpx not provided",
     ))?;
-    let total_distance = geo_json.distance();
-    let _ride: Ride = get_db()?
-        .create("rides")
-        .content(Ride {
-            id: None,
-            name: ride_name,
-            geo_json,
-            total_distance,
-        })
-        .await?;
+    let new_ride = create_ride(ride_name, geo_json).await?;
+    let _ride: Ride = get_db()?.create("rides").content(new_ride).await?;
 
     Ok(())
 }

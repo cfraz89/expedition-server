@@ -207,6 +207,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "color-eyre",
+ "futures",
  "geo 0.26.0",
  "geo-types",
  "geojson",
