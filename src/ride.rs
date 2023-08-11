@@ -1,45 +1,65 @@
-use std::future::IntoFuture;
-
 use geo_types::Point;
-use geojson::GeoJson;
-use google_maps::prelude::{Decimal, Geocoding};
+use geojson::{Feature, FeatureCollection, Geometry};
+use google_maps::{
+    prelude::{Decimal, Geocoding},
+    LatLng,
+};
 
 use crate::{
     clients::get_google_maps,
     ride_geo::{Distance, EndPoint, StartPoint},
     types::ride::Ride,
 };
-use color_eyre::eyre::Result;
-use futures::future::{self, FutureExt};
+use color_eyre::eyre::{eyre, Result};
 use futures::join;
 
-pub async fn create_ride(name: String, geo_json: GeoJson) -> Result<Ride> {
-    let total_distance = geo_json.distance();
-    let start_address_future = match geo_json.start_point() {
-        Some(p) => reverse_geocode_point(p).boxed(),
-        None => future::ok(None).boxed(),
-    };
-    let end_address_future = match geo_json.end_point() {
-        Some(p) => reverse_geocode_point(p).boxed(),
-        None => future::ok(None).boxed(),
-    };
-    let (start_address, end_address) = join!(start_address_future, end_address_future);
+pub async fn create_ride(name: String, mut feature_collection: FeatureCollection) -> Result<Ride> {
+    let start_point = feature_collection
+        .start_point()
+        .ok_or(eyre!("No start point on geometry"))?;
+    let end_point = feature_collection
+        .end_point()
+        .ok_or(eyre!("No end point on geometry"))?;
+    feature_collection
+        .features
+        .push(feature_point(String::from("start"), &start_point));
+    feature_collection
+        .features
+        .push(feature_point(String::from("end"), &end_point));
+
+    let total_distance = feature_collection.distance();
+    let (start_address, end_address) = join!(
+        reverse_geocode(lat_lng_from_point(start_point)),
+        reverse_geocode(lat_lng_from_point(end_point))
+    );
     Ok(Ride {
         id: None,
         name,
-        geo_json,
+        geo_json: feature_collection.into(),
         total_distance,
-        start_address: start_address?,
-        end_address: end_address?,
+        start_address: start_address?.map_or(vec![], |addr| addr.address_components),
+        end_address: end_address?.map_or(vec![], |addr| addr.address_components),
     })
 }
 
-async fn reverse_geocode_point(point: Point) -> Result<Option<Geocoding>> {
+fn feature_point(id: String, point: &Point) -> Feature {
+    Feature {
+        id: Some(geojson::feature::Id::String(id)),
+        geometry: Some(Geometry::new(point.into())),
+        ..Default::default()
+    }
+}
+
+fn lat_lng_from_point(point: Point) -> LatLng {
+    LatLng {
+        lat: Decimal::from_f64_retain(point.y()).unwrap(),
+        lng: Decimal::from_f64_retain(point.x()).unwrap(),
+    }
+}
+
+async fn reverse_geocode(latlng: LatLng) -> Result<Option<Geocoding>> {
     Ok(get_google_maps()?
-        .reverse_geocoding(google_maps::LatLng {
-            lat: Decimal::from_f64_retain(point.y()).unwrap(),
-            lng: Decimal::from_f64_retain(point.x()).unwrap(),
-        })
+        .reverse_geocoding(latlng)
         .execute()
         .await?
         .results

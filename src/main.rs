@@ -12,11 +12,11 @@ use axum::{
     Json, Router,
 };
 use clients::{get_db, DB, GMAPS};
-use geojson::GeoJson;
+use geojson::FeatureCollection;
 use google_maps::GoogleMapsClient;
 use net::response::{ResponseError, Result};
 use ride::create_ride;
-use ride_geo::IntoRideGeoJson;
+use ride_geo::IntoRideFeatureCollection;
 use surrealdb::{engine::remote::ws::Ws, opt::auth::Root, Surreal};
 use tower_http::cors::CorsLayer;
 use tracing::instrument;
@@ -90,8 +90,9 @@ async fn delete_ride_by_id(Path(ride_id): Path<String>) -> Result<()> {
 }
 
 #[instrument(skip(multipart))]
+#[axum::debug_handler]
 async fn import_gpx(mut multipart: Multipart) -> Result<()> {
-    let mut geo_json_opt: Option<GeoJson> = None;
+    let mut geo_feature_collection_opt: Option<FeatureCollection> = None;
     let mut ride_name_opt: Option<String> = None;
     while let Some(field) = multipart.next_field().await? {
         let name = field.name().ok_or(ResponseError::internal_server_error(
@@ -101,7 +102,7 @@ async fn import_gpx(mut multipart: Multipart) -> Result<()> {
             "ride_name" => ride_name_opt = Some(field.text().await?),
             "gpx" => {
                 let gpx_obj = gpx::read(field.text().await?.as_bytes())?;
-                geo_json_opt = Some(gpx_obj.into_ride_geo_json()?);
+                geo_feature_collection_opt = Some(gpx_obj.into_ride_feature_collection()?);
             }
             _ => continue,
         }
@@ -110,11 +111,11 @@ async fn import_gpx(mut multipart: Multipart) -> Result<()> {
         StatusCode::BAD_REQUEST,
         "ride_name not provided",
     ))?;
-    let geo_json = geo_json_opt.ok_or(ResponseError::with_status(
+    let geo_feature_collection = geo_feature_collection_opt.ok_or(ResponseError::with_status(
         StatusCode::BAD_REQUEST,
         "gpx not provided",
     ))?;
-    let new_ride = create_ride(ride_name, geo_json).await?;
+    let new_ride = create_ride(ride_name, geo_feature_collection).await?;
     let _ride: Ride = get_db()?.create("rides").content(new_ride).await?;
 
     Ok(())

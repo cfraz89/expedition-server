@@ -5,8 +5,8 @@ use geojson::{Feature, FeatureCollection, GeoJson, Geometry};
 
 use crate::types::feature::FeatureProperties;
 
-pub trait IntoRideGeoJson<'a> {
-    fn into_ride_geo_json(&'a self) -> Result<GeoJson>;
+pub trait IntoRideFeatureCollection<'a> {
+    fn into_ride_feature_collection(&'a self) -> Result<FeatureCollection>;
 }
 
 pub trait IntoRideFeature<'a> {
