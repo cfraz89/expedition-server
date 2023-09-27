@@ -1,4 +1,5 @@
 mod clients;
+mod geocode;
 mod import;
 mod net;
 mod ride;
@@ -20,7 +21,7 @@ use ride_geo::IntoRideFeatureCollection;
 use surrealdb::{engine::remote::ws::Ws, opt::auth::Root, Surreal};
 use tower_http::cors::CorsLayer;
 use tracing::instrument;
-use types::ride::Ride;
+use types::ride::{ListRide, Ride};
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -69,11 +70,11 @@ fn init_google_maps() -> color_eyre::Result<()> {
     Ok(())
 }
 
-async fn get_rides() -> Result<Json<Vec<serde_json::Value>>> {
+async fn get_rides() -> Result<Json<Vec<ListRide>>> {
     let mut rides = get_db()?
-        .query("select meta::id(id) as id, name, total_distance, start_address, end_address from rides")
+        .query("select meta::id(id) as id, name, total_distance, start_address, end_address, array::flatten(geo_json.features[where id='start'].geometry.coordinates) as start_point from rides")
         .await?;
-    let ride_names: Vec<serde_json::Value> = rides.take(0)?;
+    let ride_names: Vec<ListRide> = rides.take(0)?;
     Ok(Json(ride_names))
 }
 

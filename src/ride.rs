@@ -7,6 +7,7 @@ use google_maps::{
 
 use crate::{
     clients::get_google_maps,
+    geocode::{lat_lng_from_point, reverse_geocode},
     ride_geo::{Distance, EndPoint, StartPoint},
     types::ride::Ride,
 };
@@ -48,21 +49,4 @@ fn feature_point(id: String, point: &Point) -> Feature {
         geometry: Some(Geometry::new(point.into())),
         ..Default::default()
     }
-}
-
-fn lat_lng_from_point(point: Point) -> LatLng {
-    LatLng {
-        lat: Decimal::from_f64_retain(point.y()).unwrap(),
-        lng: Decimal::from_f64_retain(point.x()).unwrap(),
-    }
-}
-
-async fn reverse_geocode(latlng: LatLng) -> Result<Option<Geocoding>> {
-    Ok(get_google_maps()?
-        .reverse_geocoding(latlng)
-        .execute()
-        .await?
-        .results
-        .first()
-        .cloned())
 }
