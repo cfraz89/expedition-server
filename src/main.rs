@@ -117,7 +117,7 @@ async fn import_gpx(mut multipart: Multipart) -> Result<()> {
         "gpx not provided",
     ))?;
     let new_ride = create_ride(ride_name, geo_feature_collection).await?;
-    let _ride: Ride = get_db()?.create("rides").content(new_ride).await?;
+    let _ride: Vec<Ride> = get_db()?.create("rides").content(new_ride).await?;
 
     Ok(())
 }
