@@ -1,7 +1,9 @@
 FROM rust:latest as builder
 
 WORKDIR /usr/src/expedition
-COPY . .
+COPY src src
+COPY Cargo.toml Cargo.toml
+COPY Cargo.lock Cargo.lock
 
 RUN cargo install --path .
 
