@@ -1295,6 +1295,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "futures",
+ "geo-types",
  "miette",
  "percent-encoding",
  "phf",

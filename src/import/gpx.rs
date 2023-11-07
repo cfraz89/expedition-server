@@ -1,5 +1,5 @@
 use color_eyre::Result;
-use geojson::{FeatureCollection, GeoJson};
+use geojson::FeatureCollection;
 use gpx::Gpx;
 use tracing::{info, instrument};
 
@@ -8,7 +8,6 @@ use crate::ride_geo::{IntoRideFeature, IntoRideFeatureCollection};
 impl<'a> IntoRideFeatureCollection<'a> for Gpx {
     #[instrument]
     fn into_ride_feature_collection(&'a self) -> Result<FeatureCollection> {
-        // let gpx_data = gpx::read(gpx.as_bytes())?;
         info!("number of tracks in gpx: {}", self.tracks.len());
         self.tracks
             .iter()

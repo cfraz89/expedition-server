@@ -2,7 +2,7 @@ use geo_types::Point;
 use geojson::{Feature, FeatureCollection, Geometry};
 
 use crate::{
-    geocode::{lat_lng_from_point, reverse_geocode},
+    geocode::reverse_geocode,
     ride_geo::{Distance, EndPoint, StartPoint},
     types::ride::Ride,
 };
@@ -25,8 +25,8 @@ pub async fn create_ride(name: String, mut feature_collection: FeatureCollection
 
     let total_distance = feature_collection.distance();
     let (start_address, end_address) = join!(
-        reverse_geocode(lat_lng_from_point(start_point)?),
-        reverse_geocode(lat_lng_from_point(end_point)?)
+        reverse_geocode(google_maps::LatLng::try_from(&start_point)?.to_owned()),
+        reverse_geocode(google_maps::LatLng::try_from(&end_point)?.to_owned())
     );
     Ok(Ride {
         id: None,

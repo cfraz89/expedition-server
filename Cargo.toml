@@ -12,7 +12,12 @@ futures = "0.3.28"
 geo = "0.26.0"
 geo-types = "0.7.11"
 geojson = "0.24.1"
-google_maps = { version = "3.3.2", features = ["decimal-serde-float"] }
+google_maps = { version = "3.3.2", features = [
+  # Needed to decode latlngs to decimal
+  "decimal-serde-float",
+  # To convert from geo types to gmaps latlng
+  "geo",
+] }
 gpx = "0.9.1"
 num-traits = "0.2.17"
 serde = { version = "1.0.190", features = ["derive"] }
