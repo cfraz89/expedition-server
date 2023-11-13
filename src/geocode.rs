@@ -1,5 +1,4 @@
-use color_eyre::eyre::{eyre, Result};
-use geo_types::Point;
+use color_eyre::eyre::Result;
 use google_maps::{prelude::*, LatLng};
 
 use crate::clients::get_google_maps;

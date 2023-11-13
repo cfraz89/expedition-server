@@ -12,16 +12,18 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
-use clients::{get_db, DB, GMAPS};
+use clients::{get_db_pool, DB_POOL, GMAPS};
 use geojson::FeatureCollection;
 use google_maps::GoogleMapsClient;
 use net::response::{ResponseError, Result};
 use ride::create_ride;
 use ride_geo::IntoRideFeatureCollection;
-use surrealdb::{engine::remote::ws::Ws, opt::auth::Root, Surreal};
+use sqlx::postgres::PgPoolOptions;
 use tower_http::cors::CorsLayer;
-use tracing::instrument;
+use tracing::{info, instrument};
 use types::ride::{ListRide, Ride};
+use sqlx::types::Json as sqlx_json;
+use google_maps::AddressComponent
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -40,6 +42,8 @@ async fn main() -> color_eyre::Result<()> {
         .route("/rides/:id", delete(delete_ride_by_id))
         .layer(CorsLayer::permissive());
 
+    info!("Running on port 3000");
+
     // run our app with hyper, listening globally on port 3000
     axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
         .serve(app.into_make_service())
@@ -49,17 +53,12 @@ async fn main() -> color_eyre::Result<()> {
 }
 
 async fn init_db() -> color_eyre::Result<()> {
-    let db_uri = std::env::var("EXPEDITION_SURREAL_URI")?;
-    let db_user = std::env::var("EXPEDITION_SURREAL_USER")?;
-    let db_pass = std::env::var("EXPEDITION_SURREAL_PASS")?;
-    let db = Surreal::new::<Ws>(db_uri).await?;
-    db.signin(Root {
-        username: db_user.as_str(),
-        password: db_pass.as_str(),
-    })
-    .await?;
-    db.use_ns("expedition").use_db("expedition").await?;
-    DB.set(db).unwrap();
+    let db_uri = std::env::var("DATABASE_URL")?;
+    let db_pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&db_uri)
+        .await?;
+    DB_POOL.set(db_pool).unwrap();
     Ok(())
 }
 
@@ -71,23 +70,54 @@ fn init_google_maps() -> color_eyre::Result<()> {
 }
 
 async fn get_rides() -> Result<Json<Vec<ListRide>>> {
-    let mut rides = get_db()?
-        .query("select meta::id(id) as id, name, total_distance, start_address, end_address, array::flatten(geo_json.features[where id='start'].geometry.coordinates) as start_point from rides")
-        .await?;
-    let ride_names: Vec<ListRide> = rides.take(0)?;
-    Ok(Json(ride_names))
+    let rides = sqlx::query_as!(
+        ListRide,
+        r#"select 
+        id,
+        name,
+        total_distance,
+        start_address as "start_address: sqlx_json<Vec<AddressComponent>>",
+        end_address as "end_address: sqlx_json<Vec<AddressComponent>>", 
+        jsonb_path_query(geo_json, '$[*].features ? (@.id == "start").geometry.coordinates') as "start_point: sqlx_json<geo_types::Point>"
+        from rides"#
+    )
+    .fetch_all(get_db_pool()?)
+    .await?;
+    Ok(Json(rides))
 }
 
-async fn get_ride_by_id(Path(ride_id): Path<String>) -> Result<Json<Ride>> {
-    let option_ride: Option<Ride> = get_db()?.select(("rides", ride_id)).await?;
+async fn get_ride_by_id(Path(ride_id): Path<i32>) -> Result<Json<Ride>> {
+    let option_ride = sqlx::query_as!(
+        Ride,
+        r#"select
+    id,
+    name,
+    geo_json as "geo_json: sqlx_json<geojson::GeoJson>",
+    total_distance,
+    start_address as "start_address: sqlx_json<Vec<AddressComponent>>",
+    end_address as "end_address: sqlx_json<Vec<AddressComponent>>"
+ from rides 
+        where id = $1"#,
+        ride_id.into()
+    )
+    .fetch_optional(get_db_pool()?)
+    .await?;
     let ride = option_ride.ok_or(ResponseError::not_found("No ride with this id"))?;
     Ok(Json(ride))
 }
 
-async fn delete_ride_by_id(Path(ride_id): Path<String>) -> Result<()> {
-    let ride: Option<Ride> = get_db()?.delete(("rides", ride_id)).await?;
-    ride.map(|_| ())
-        .ok_or(ResponseError::not_found("no ride with this id"))
+async fn delete_ride_by_id(Path(ride_id): Path<i32>) -> Result<()> {
+    let result = sqlx::query!(
+        r#"delete from rides 
+        where id = $1"#,
+        ride_id
+    )
+    .execute(get_db_pool()?)
+    .await?;
+    if result.rows_affected() == 0 {
+        Err(ResponseError::not_found("no ride with this id"))?;
+    }
+    Ok(())
 }
 
 #[instrument(skip(multipart))]
@@ -116,8 +146,17 @@ async fn import_gpx(mut multipart: Multipart) -> Result<()> {
         StatusCode::BAD_REQUEST,
         "gpx not provided",
     ))?;
-    let new_ride = create_ride(ride_name, geo_feature_collection).await?;
-    let _ride: Vec<Ride> = get_db()?.create("rides").content(new_ride).await?;
-
+    let ride = create_ride(ride_name, geo_feature_collection).await?;
+    sqlx::query!(
+        r#"insert into rides (name, geo_json, total_distance, start_address, end_address)
+        values ($1, $2, $3, $4, $5)"#,
+        ride.name,
+        ride.geo_json as _,
+        ride.total_distance,
+        ride.start_address as _,
+        ride.end_address as _,
+    )
+    .execute(get_db_pool()?)
+    .await?;
     Ok(())
 }

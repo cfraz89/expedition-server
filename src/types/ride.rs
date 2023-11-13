@@ -2,24 +2,24 @@ use geo_types::Point;
 use geojson::GeoJson;
 use google_maps::AddressComponent;
 use serde::{Deserialize, Serialize};
-use surrealdb::sql::Thing;
+use sqlx::types::{BigDecimal, Json};
 
 #[derive(Serialize, Deserialize)]
 pub struct Ride {
-    pub id: Option<Thing>,
+    pub id: Option<i32>,
     pub name: String,
-    pub geo_json: GeoJson,
-    pub total_distance: f64,
-    pub start_address: Vec<AddressComponent>,
-    pub end_address: Vec<AddressComponent>,
+    pub geo_json: Json<GeoJson>,
+    pub total_distance: BigDecimal,
+    pub start_address: Json<Vec<AddressComponent>>,
+    pub end_address: Json<Vec<AddressComponent>>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct ListRide {
-    pub id: String,
+    pub id: i32,
     pub name: String,
-    pub total_distance: f64,
-    pub start_address: Vec<AddressComponent>,
-    pub end_address: Vec<AddressComponent>,
-    pub start_point: Point,
+    pub total_distance: BigDecimal,
+    pub start_address: Json<Vec<AddressComponent>>,
+    pub end_address: Json<Vec<AddressComponent>>,
+    pub start_point: Option<Json<Point>>,
 }

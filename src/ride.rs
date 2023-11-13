@@ -1,3 +1,4 @@
+use bigdecimal::BigDecimal;
 use geo_types::Point;
 use geojson::{Feature, FeatureCollection, Geometry};
 
@@ -23,7 +24,7 @@ pub async fn create_ride(name: String, mut feature_collection: FeatureCollection
         .features
         .push(feature_point(String::from("end"), &end_point));
 
-    let total_distance = feature_collection.distance();
+    let total_distance = BigDecimal::try_from(feature_collection.distance())?;
     let (start_address, end_address) = join!(
         reverse_geocode(google_maps::LatLng::try_from(&start_point)?.to_owned()),
         reverse_geocode(google_maps::LatLng::try_from(&end_point)?.to_owned())
@@ -31,10 +32,12 @@ pub async fn create_ride(name: String, mut feature_collection: FeatureCollection
     Ok(Ride {
         id: None,
         name,
-        geo_json: feature_collection.into(),
+        geo_json: sqlx::types::Json(feature_collection.into()),
         total_distance,
-        start_address: start_address?.map_or(vec![], |addr| addr.address_components),
-        end_address: end_address?.map_or(vec![], |addr| addr.address_components),
+        start_address: sqlx::types::Json(
+            start_address?.map_or(vec![], |addr| addr.address_components),
+        ),
+        end_address: sqlx::types::Json(end_address?.map_or(vec![], |addr| addr.address_components)),
     })
 }
 

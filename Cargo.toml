@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 axum = { version = "0.6.20", features = ["tracing", "multipart", "macros"] }
+bigdecimal = { version = "0.3.0", features = ["serde"] }
 color-eyre = "0.6.2"
 futures = "0.3.28"
 geo = "0.26.0"
@@ -22,8 +23,13 @@ gpx = "0.9.1"
 num-traits = "0.2.17"
 serde = { version = "1.0.190", features = ["derive"] }
 serde_json = "1.0.108"
-surrealdb = "1.0.0"
 tokio = { version = "1.33.0", features = ["full"] }
 tower-http = { version = "0.4.4", features = ["cors"] }
 tracing = "0.1.40"
 tracing-subscriber = "0.3.17"
+sqlx = { version = "0.7", features = [
+  "postgres",
+  "runtime-tokio",
+  "tls-native-tls",
+  "bigdecimal",
+] }
