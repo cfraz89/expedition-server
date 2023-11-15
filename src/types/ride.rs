@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use geo_types::Point;
 use geojson::GeoJson;
 use google_maps::AddressComponent;
@@ -6,20 +8,26 @@ use sqlx::types::{BigDecimal, Json};
 
 #[derive(Serialize, Deserialize)]
 pub struct Ride {
-    pub id: Option<i32>,
+    pub id: Option<i64>,
     pub name: String,
     pub geo_json: Json<GeoJson>,
+    //Total distance in metres
     pub total_distance: BigDecimal,
+    pub surface_composition: Json<HashMap<String, BigDecimal>>,
+    //Ride time in seconds
+    pub ride_time: i64,
     pub start_address: Json<Vec<AddressComponent>>,
     pub end_address: Json<Vec<AddressComponent>>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct ListRide {
-    pub id: i32,
+    pub id: i64,
     pub name: String,
     pub total_distance: BigDecimal,
+    pub ride_time: i64,
     pub start_address: Json<Vec<AddressComponent>>,
     pub end_address: Json<Vec<AddressComponent>>,
     pub start_point: Option<Json<Point>>,
+    pub end_point: Option<Json<Point>>,
 }

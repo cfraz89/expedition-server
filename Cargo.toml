@@ -33,3 +33,4 @@ sqlx = { version = "0.7", features = [
   "tls-native-tls",
   "bigdecimal",
 ] }
+reqwest = { version = "0.11.22", features = ["json"] }

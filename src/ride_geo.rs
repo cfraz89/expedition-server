@@ -263,3 +263,68 @@ impl EndPoint for GeoJson {
         }
     }
 }
+
+pub trait Points {
+    fn points(&self) -> impl Iterator<Item = Point>;
+}
+
+impl Points for geojson::Value {
+    fn points(&self) -> Box<dyn Iterator<Item = Point> + '_> {
+        match self {
+            geojson::Value::Point(_) => {
+                Box::new(std::iter::once(geo_types::Point::try_from(self).unwrap()))
+            }
+            geojson::Value::MultiPoint(_) => {
+                Box::new(geo_types::MultiPoint::try_from(self).unwrap().0.into_iter())
+            }
+            geojson::Value::LineString(_) => Box::new(
+                geo_types::LineString::try_from(self)
+                    .unwrap()
+                    .into_points()
+                    .into_iter(),
+            ),
+            geojson::Value::MultiLineString(_) => Box::new(
+                geo_types::MultiLineString::try_from(self)
+                    .unwrap()
+                    .into_iter()
+                    .flat_map(|ls| ls.points().collect::<Vec<_>>()),
+            ),
+            geojson::Value::Polygon(_) => Box::new(std::iter::empty()),
+            geojson::Value::MultiPolygon(_) => Box::new(std::iter::empty()),
+            geojson::Value::GeometryCollection(geoms) => {
+                Box::new(geoms.into_iter().flat_map(|g| g.points()))
+            }
+        }
+    }
+}
+
+impl Points for Geometry {
+    fn points(&self) -> impl Iterator<Item = Point> {
+        self.value.points()
+    }
+}
+
+impl Points for Feature {
+    fn points(&self) -> Box<dyn Iterator<Item = Point> + '_> {
+        match &self.geometry {
+            None => Box::new(std::iter::empty()),
+            Some(geo) => Box::new(geo.points()),
+        }
+    }
+}
+
+impl Points for FeatureCollection {
+    fn points(&self) -> impl Iterator<Item = Point> {
+        self.into_iter().flat_map(|f| f.points())
+    }
+}
+
+impl Points for GeoJson {
+    fn points(&self) -> Box<dyn Iterator<Item = Point> + '_> {
+        match self {
+            GeoJson::Geometry(geom) => Box::new(geom.points()),
+            GeoJson::Feature(feat) => Box::new(feat.points()),
+            GeoJson::FeatureCollection(fc) => Box::new(fc.points()),
+        }
+    }
+}
