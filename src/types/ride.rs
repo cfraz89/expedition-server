@@ -25,6 +25,7 @@ pub struct ListRide {
     pub id: i64,
     pub name: String,
     pub total_distance: BigDecimal,
+    pub surface_composition: Json<HashMap<String, BigDecimal>>,
     pub ride_time: i64,
     pub start_address: Json<Vec<AddressComponent>>,
     pub end_address: Json<Vec<AddressComponent>>,

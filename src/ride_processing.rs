@@ -1,16 +1,13 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use bigdecimal::BigDecimal;
 use color_eyre::eyre::{eyre, Result};
-use futures::{
-    stream::{self, StreamExt, TryStreamExt},
-    TryFutureExt,
-};
 use google_maps::{prelude::*, LatLng};
-use tokio::sync::Mutex;
+use tracing::{debug, instrument};
 
 use crate::{clients::get_google_maps, types::overpass::OverpassResponse};
 
+#[instrument]
 pub async fn reverse_geocode(latlng: LatLng) -> Result<Option<Geocoding>> {
     Ok(get_google_maps()?
         .reverse_geocoding(latlng)
@@ -21,6 +18,7 @@ pub async fn reverse_geocode(latlng: LatLng) -> Result<Option<Geocoding>> {
         .cloned())
 }
 
+#[instrument]
 pub async fn ride_time(start: LatLng, end: LatLng) -> Result<Duration> {
     Ok(get_google_maps()?
         .distance_matrix(vec![Waypoint::LatLng(start)], vec![Waypoint::LatLng(end)])
@@ -38,42 +36,36 @@ pub async fn ride_time(start: LatLng, end: LatLng) -> Result<Duration> {
         .value)
 }
 
+#[instrument(skip(route))]
 pub async fn surface_composition(route: Vec<LatLng>) -> Result<HashMap<String, BigDecimal>> {
     let client = reqwest::Client::new();
-    let surface_map = Arc::new(Mutex::new(HashMap::<String, i64>::new()));
-    stream::iter(route)
-        .map(|latlng| {
-            client
-                .post("https://overpass-api.de/api/interpreter")
-                .body(format!(
-                    r#"
+    let mut surface_map = HashMap::<String, i64>::new();
+    let resp = client
+        .post("https://overpass-api.de/api/interpreter")
+        .body(format!(
+            r#"
                     [out:json];
-                    way[highway](around: 1, {}, {});
-                    out geom;
+                    ({});
+                    out tags;
                     "#,
-                    latlng.lat, latlng.lng
-                ))
-                .send()
-                .and_then(|r| async move { r.json::<OverpassResponse>().await })
-        })
-        .buffer_unordered(10)
-        .try_for_each(|resp| async {
-            let surface_map_ref = surface_map.clone();
-            move || {
-                resp.elements.iter().for_each(|el| {
-                    if let Some(surface) = &el.tags.surface {
-                        surface_map_ref
-                            .blocking_lock()
-                            .entry(surface.to_string())
-                            .and_modify(|count| *count += 1)
-                            .or_insert(1);
-                    }
-                })
-            };
-            Ok(())
-        })
+            route
+                .iter()
+                .map(|coord| format!("way[highway](around: 1, {}, {});", coord.lat, coord.lng))
+                .collect::<String>()
+        ))
+        .send()
+        .await?
+        .json::<OverpassResponse>()
         .await?;
-    let surface_map = surface_map.lock().await;
+    resp.elements.iter().for_each(|el| {
+        if let Some(surface) = &el.tags.surface {
+            surface_map
+                .entry(aggregate_surface(surface).to_string())
+                .and_modify(|count| *count += 1)
+                .or_insert(1);
+        }
+    });
+    debug!("Surface map: {:?}", surface_map);
     let mut surface_ratio_map = HashMap::<String, BigDecimal>::new();
     let total_samples: i64 = surface_map.values().sum();
     surface_map.iter().for_each(|(k, v)| {
@@ -81,5 +73,14 @@ pub async fn surface_composition(route: Vec<LatLng>) -> Result<HashMap<String, B
             .entry(k.to_string())
             .or_insert(BigDecimal::from(*v) / BigDecimal::from(total_samples));
     });
+    debug!("Surface ratio map: {:?}", surface_ratio_map);
     Ok(surface_ratio_map)
+}
+
+fn aggregate_surface(surface: &str) -> &str {
+    match surface {
+        "gravel" | "unpaved" | "dirt" | "fine_gravel" | "rock" => "dirt",
+        "asphalt" | "paved" => "tarmac",
+        s => s,
+    }
 }

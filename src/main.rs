@@ -80,6 +80,7 @@ async fn get_rides() -> Result<Json<Vec<ListRide>>> {
         id,
         name,
         total_distance,
+    surface_composition as "surface_composition: sqlx_json<HashMap<String, BigDecimal>>",
         ride_time,
         start_address as "start_address: sqlx_json<Vec<AddressComponent>>",
         end_address as "end_address: sqlx_json<Vec<AddressComponent>>", 
@@ -156,11 +157,12 @@ async fn import_gpx(mut multipart: Multipart) -> Result<()> {
     ))?;
     let ride = create_ride(ride_name, geo_feature_collection).await?;
     sqlx::query!(
-        r#"insert into rides (name, geo_json, total_distance, ride_time, start_address, end_address)
-        values ($1, $2, $3, $4, $5, $6)"#,
+        r#"insert into rides (name, geo_json, total_distance, surface_composition, ride_time, start_address, end_address)
+        values ($1, $2, $3, $4, $5, $6, $7)"#,
         ride.name,
         ride.geo_json as _,
         ride.total_distance,
+        ride.surface_composition as _,
         ride.ride_time,
         ride.start_address as _,
         ride.end_address as _,
