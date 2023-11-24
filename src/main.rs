@@ -1,3 +1,5 @@
+#![feature(async_closure)]
+
 mod clients;
 mod import;
 mod net;
@@ -80,7 +82,8 @@ async fn get_rides() -> Result<Json<Vec<ListRide>>> {
         id,
         name,
         total_distance,
-    surface_composition as "surface_composition: sqlx_json<HashMap<String, BigDecimal>>",
+        ways,
+        surface_composition as "surface_composition: sqlx_json<HashMap<String, BigDecimal>>",
         ride_time,
         start_address as "start_address: sqlx_json<Vec<AddressComponent>>",
         end_address as "end_address: sqlx_json<Vec<AddressComponent>>", 

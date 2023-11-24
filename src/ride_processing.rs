@@ -1,11 +1,16 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use bigdecimal::BigDecimal;
 use color_eyre::eyre::{eyre, Result};
+use futures::stream::{self, TryStreamExt};
 use google_maps::{prelude::*, LatLng};
+use tokio::sync::Mutex;
 use tracing::{debug, instrument};
 
-use crate::{clients::get_google_maps, types::overpass::OverpassResponse};
+use crate::{
+    clients::get_google_maps,
+    types::nominatim::{self, NominatimPlace},
+};
 
 #[instrument]
 pub async fn reverse_geocode(latlng: LatLng) -> Result<Option<Geocoding>> {
@@ -36,45 +41,63 @@ pub async fn ride_time(start: LatLng, end: LatLng) -> Result<Duration> {
         .value)
 }
 
+struct WayData {
+    seq: usize,
+    address: HashMap<String, String>,
+    surface: Option<String>,
+}
+
+// fn new_way_data(element: &OverpassElement) -> Result<WayData> {
+//     Ok(WayData {
+//         way: Way {
+//             osm_id: element.id,
+//             name: element.tags.name.ok_or(eyre!("No name on element!"))?,
+//             surface_composition: element
+//                 .tags
+//                 .surface
+//                 .ok_or(eyre!("No surface on element!"))?,
+//         },
+//         last_point: Point::default(),
+//         distance: 0,
+//     })
+// }
+
 #[instrument(skip(route))]
-pub async fn surface_composition(route: Vec<LatLng>) -> Result<HashMap<String, BigDecimal>> {
+pub async fn ways(route: Vec<LatLng>, total_distance: BigDecimal) -> Result<Vec<WayData>> {
+    let nominatimUrl = std::env::var("EXPEDITION_NOMINATIM_URL")?;
     let client = reqwest::Client::new();
-    let mut surface_map = HashMap::<String, i64>::new();
-    let resp = client
-        .post("https://overpass-api.de/api/interpreter")
-        .body(format!(
-            r#"
-                    [out:json];
-                    ({});
-                    out tags;
-                    "#,
-            route
-                .iter()
-                .map(|coord| format!("way[highway](around: 1, {}, {});", coord.lat, coord.lng))
-                .collect::<String>()
-        ))
-        .send()
-        .await?
-        .json::<OverpassResponse>()
-        .await?;
-    resp.elements.iter().for_each(|el| {
-        if let Some(surface) = &el.tags.surface {
-            surface_map
-                .entry(aggregate_surface(surface).to_string())
-                .and_modify(|count| *count += 1)
-                .or_insert(1);
+    //Key is id. The decimal is distance on the way
+    let ways = Arc::new(Mutex::new(HashMap::<usize, Vec<WayData>>::new()));
+    stream::iter(route.iter().enumerate().map(Ok)).try_for_each_concurrent(10, |(seq, coord)| {
+        let client = client.clone();
+        let nominatimUrl = nominatimUrl.clone();
+        let ways = ways.clone();
+        async move {
+            let place = client
+                .get(format!(
+                    "${nominatimUrl}/reverse?lat={lat}&lon={lon}&extratags=1&format=json",
+                    lat = coord.lat,
+                    lon = coord.lng
+                ))
+                .send()
+                .await?
+                .json::<NominatimPlace>()
+                .await?;
+            if place.osm_type == "way" {
+                ways.lock()
+                    .await
+                    .entry(place.place_id)
+                    .or_insert(Vec::new())
+                    .push(WayData {
+                        seq,
+                        address: place.address,
+                        surface: place.extratags.surface,
+                    })
+            }
+            Ok::<(), color_eyre::eyre::Error>(())
         }
     });
-    debug!("Surface map: {:?}", surface_map);
-    let mut surface_ratio_map = HashMap::<String, BigDecimal>::new();
-    let total_samples: i64 = surface_map.values().sum();
-    surface_map.iter().for_each(|(k, v)| {
-        surface_ratio_map
-            .entry(k.to_string())
-            .or_insert(BigDecimal::from(*v) / BigDecimal::from(total_samples));
-    });
-    debug!("Surface ratio map: {:?}", surface_ratio_map);
-    Ok(surface_ratio_map)
+    Ok(vec![])
 }
 
 fn aggregate_surface(surface: &str) -> &str {
