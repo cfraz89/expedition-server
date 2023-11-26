@@ -265,11 +265,11 @@ impl EndPoint for GeoJson {
 }
 
 pub trait Points {
-    fn points(&self) -> impl Iterator<Item = Point>;
+    fn points(&self) -> impl Iterator<Item = Point> + Send;
 }
 
 impl Points for geojson::Value {
-    fn points(&self) -> Box<dyn Iterator<Item = Point> + '_> {
+    fn points(&self) -> Box<dyn Iterator<Item = Point> + '_ + Send> {
         match self {
             geojson::Value::Point(_) => {
                 Box::new(std::iter::once(geo_types::Point::try_from(self).unwrap()))
@@ -299,13 +299,13 @@ impl Points for geojson::Value {
 }
 
 impl Points for Geometry {
-    fn points(&self) -> impl Iterator<Item = Point> {
+    fn points(&self) -> impl Iterator<Item = Point> + Send {
         self.value.points()
     }
 }
 
 impl Points for Feature {
-    fn points(&self) -> Box<dyn Iterator<Item = Point> + '_> {
+    fn points(&self) -> Box<dyn Iterator<Item = Point> + '_ + Send> {
         match &self.geometry {
             None => Box::new(std::iter::empty()),
             Some(geo) => Box::new(geo.points()),
@@ -314,13 +314,13 @@ impl Points for Feature {
 }
 
 impl Points for FeatureCollection {
-    fn points(&self) -> impl Iterator<Item = Point> {
+    fn points(&self) -> impl Iterator<Item = Point> + Send {
         self.into_iter().flat_map(|f| f.points())
     }
 }
 
 impl Points for GeoJson {
-    fn points(&self) -> Box<dyn Iterator<Item = Point> + '_> {
+    fn points(&self) -> Box<dyn Iterator<Item = Point> + '_ + Send> {
         match self {
             GeoJson::Geometry(geom) => Box::new(geom.points()),
             GeoJson::Feature(feat) => Box::new(feat.points()),

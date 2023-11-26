@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
-use geo_types::{LineString, Point};
+use geo_types::Point;
 use geojson::GeoJson;
-use google_maps::AddressComponent;
 use serde::{Deserialize, Serialize};
 use sqlx::types::{BigDecimal, Json};
 
@@ -13,12 +12,9 @@ pub struct Ride {
     pub geo_json: Json<GeoJson>,
     //Total distance in metres
     pub total_distance: BigDecimal,
-    pub surface_composition: Json<HashMap<String, BigDecimal>>,
-    pub ways: Json<HashMap<String, BigDecimal>>,
-    //Ride time in seconds
-    pub ride_time: i64,
-    pub start_address: Json<Vec<AddressComponent>>,
-    pub end_address: Json<Vec<AddressComponent>>,
+    pub ways: Json<Vec<Way>>,
+    pub start_address: Json<HashMap<String, String>>,
+    pub end_address: Json<HashMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -26,24 +22,22 @@ pub struct ListRide {
     pub id: i64,
     pub name: String,
     pub total_distance: BigDecimal,
-    pub surface_composition: Json<HashMap<String, BigDecimal>>,
-    pub ride_time: i64,
-    pub start_address: Json<Vec<AddressComponent>>,
-    pub end_address: Json<Vec<AddressComponent>>,
+    pub ways: Json<Vec<Way>>,
+    pub start_address: Json<HashMap<String, String>>,
+    pub end_address: Json<HashMap<String, String>>,
     pub start_point: Option<Json<Point>>,
     pub end_point: Option<Json<Point>>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Way {
-    pub osm_id: i64,
-    pub name: String,
-    pub surface_composition: String,
+    pub distance: f64,
+    pub points: Vec<WayPoint>,
+    pub address: HashMap<String, String>,
+    pub surface: Option<String>,
 }
-
 #[derive(Serialize, Deserialize)]
-pub struct RideWay {
-    pub ride_id: i64,
-    pub way_osm_id: i64,
-    pub distance_on_ride: BigDecimal,
+pub struct WayPoint {
+    pub seq: usize,
+    pub point: Point,
 }
