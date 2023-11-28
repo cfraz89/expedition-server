@@ -3,7 +3,5 @@ CREATE TABLE rides (
     name text not null,
     geo_json jsonb not null,
     total_distance decimal not null,
-    ways jsonb not null,
-    start_address jsonb not null,
-    end_address jsonb not null
+    ways jsonb not null
 );

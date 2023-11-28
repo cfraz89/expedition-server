@@ -6,7 +6,7 @@ use futures::stream::{self, TryStreamExt};
 use geo::VincentyDistance;
 use geo_types::Point;
 use google_maps::{prelude::*, LatLng};
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, try_join};
 use tracing::instrument;
 
 use crate::{
@@ -134,15 +134,16 @@ pub async fn process_ride(ride: model::ride::QueryRide, origin: LatLng) -> Resul
     let end_point = ride.end_point.ok_or(eyre!("No end point"))?.0;
     let start_coords = LatLng::try_from(&start_point)?;
     let end_coords = LatLng::try_from(&end_point)?;
-    let start_address = nominatim_reverse_geocode(&start_point).await?.address;
-    let end_address = nominatim_reverse_geocode(&end_point).await?.address;
-    let (time_from_origin_to_start, time_form_end_to_origin) =
-        time_to_start_and_from_end(origin, start_coords, end_coords).await?;
+    let (start_address, end_address, (time_from_origin_to_start, time_form_end_to_origin)) = try_join!(
+        nominatim_reverse_geocode(&start_point),
+        nominatim_reverse_geocode(&end_point),
+        time_to_start_and_from_end(origin, start_coords, end_coords)
+    )?;
     Ok(model::ride::ProcessedRide {
         id: ride.id,
         name: ride.name,
-        start_address: start_address.into(),
-        end_address: end_address.into(),
+        start_address: start_address.address.into(),
+        end_address: end_address.address.into(),
         total_distance: ride.total_distance,
         time_from_origin_to_start: time_from_origin_to_start.num_seconds(),
         time_from_end_to_origin: time_form_end_to_origin.num_seconds(),
