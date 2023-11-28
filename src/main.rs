@@ -140,7 +140,7 @@ async fn get_ride_by_id(
         name,
         total_distance,
         geo_json as "geo_json: sqlx_json<geojson::GeoJson>",
-        ways as "ways: sqlx_json<Vec<model::ride::RideWay>>",
+        jsonb_path_query_array(ways, '$[0 to 4]') as "ways: sqlx_json<Vec<model::ride::RideWay>>",
         jsonb_path_query(geo_json, '$[*].features ? (@.id == "start").geometry.coordinates') as "start_point: _",
         jsonb_path_query(geo_json, '$[*].features ? (@.id == "end").geometry.coordinates') as "end_point: _"
         from rides
