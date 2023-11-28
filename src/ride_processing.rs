@@ -5,14 +5,18 @@ use color_eyre::eyre::{eyre, Result};
 use futures::stream::{self, TryStreamExt};
 use geo::VincentyDistance;
 use geo_types::Point;
+use google_maps::{prelude::*, LatLng};
 use tokio::sync::Mutex;
 use tracing::instrument;
 
 use crate::{
-    clients::{get_nominatim_url, get_reqwest_client},
+    clients::{get_google_maps, get_nominatim_url, get_reqwest_client},
     types::{
-        nominatim::NominatimPlace,
-        ride::{Way, WayPoint},
+        dto::nominatim::NominatimPlace,
+        model::{
+            self,
+            ride::{ProcessedRide, RideWay, WayPoint},
+        },
     },
 };
 
@@ -33,31 +37,13 @@ pub async fn nominatim_reverse_geocode(point: &Point) -> Result<NominatimPlace> 
     Ok(place)
 }
 
-// #[instrument]
-// pub async fn ride_time(start: LatLng, end: LatLng) -> Result<Duration> {
-//     Ok(get_google_maps()?
-//         .distance_matrix(vec![Waypoint::LatLng(start)], vec![Waypoint::LatLng(end)])
-//         .execute()
-//         .await?
-//         .rows
-//         .first()
-//         .ok_or(eyre!("No row 0!"))?
-//         .elements
-//         .first()
-//         .ok_or(eyre!("No element 0!"))?
-//         .duration
-//         .clone()
-//         .ok_or(eyre!("No duration!"))?
-//         .value)
-// }
-
 #[instrument(skip(route))]
-pub async fn ways(
+pub async fn ride_ways(
     route: impl Iterator<Item = Point> + Send,
     total_distance: &BigDecimal,
-) -> Result<Vec<Way>> {
+) -> Result<Vec<RideWay>> {
     //In parallel, get places from nominatim corresponding to coordinates, group them by place id
-    let ways = Arc::new(Mutex::new(HashMap::<usize, Way>::new()));
+    let ways = Arc::new(Mutex::new(HashMap::<u64, RideWay>::new()));
     stream::iter(route.enumerate().map(Ok))
         .try_for_each_concurrent(50, |(seq, point)| {
             let ways = ways.clone();
@@ -65,11 +51,10 @@ pub async fn ways(
                 let place = nominatim_reverse_geocode(&point).await?;
                 if place.osm_type == "way" {
                     let mut ways = ways.lock().await;
-                    let way = ways.entry(place.place_id).or_insert(Way {
+                    let way = ways.entry(place.place_id).or_insert(RideWay {
+                        place_id: place.place_id,
                         distance: 0.0,
                         points: Vec::new(),
-                        address: place.address,
-                        surface: place.extratags.surface,
                     });
                     way.points.push(WayPoint { seq, point })
                 }
@@ -90,7 +75,7 @@ pub async fn ways(
             .map_windows(|[p1, p2]| p1.point.vincenty_distance(&p2.point).unwrap_or(0.0))
             .sum();
     });
-    let mut ways_vec = ways.into_values().collect::<Vec<Way>>();
+    let mut ways_vec = ways.into_values().collect::<Vec<RideWay>>();
     ways_vec.sort_by(|way1, way2| way1.distance.total_cmp(&way2.distance).reverse());
     Ok(ways_vec)
 }
@@ -101,4 +86,69 @@ fn aggregate_surface(surface: &str) -> &str {
         "asphalt" | "paved" => "tarmac",
         s => s,
     }
+}
+
+#[instrument]
+pub async fn time_to_start_and_from_end(
+    origin: LatLng,
+    start: LatLng,
+    end: LatLng,
+) -> Result<(Duration, Duration)> {
+    let distances = get_google_maps()?
+        .distance_matrix(
+            vec![Waypoint::LatLng(origin.clone()), Waypoint::LatLng(end)],
+            vec![Waypoint::LatLng(start), Waypoint::LatLng(origin)],
+        )
+        .execute()
+        .await?;
+
+    let origin_to_start = distances
+        .rows
+        .first()
+        .ok_or(eyre!("No row 0!"))?
+        .elements
+        .first()
+        .ok_or(eyre!("No element 0!"))?
+        .duration
+        .clone()
+        .ok_or(eyre!("No duration 0!"))?
+        .value;
+
+    let end_to_origin = distances
+        .rows
+        .get(1)
+        .ok_or(eyre!("No row 1!"))?
+        .elements
+        .get(1)
+        .ok_or(eyre!("No element 1!"))?
+        .duration
+        .clone()
+        .ok_or(eyre!("No duration 1!"))?
+        .value;
+
+    Ok((origin_to_start, end_to_origin))
+}
+
+pub async fn process_ride(ride: model::ride::QueryRide, origin: LatLng) -> Result<ProcessedRide> {
+    let start_point = ride.start_point.ok_or(eyre!("No start point"))?.0;
+    let end_point = ride.end_point.ok_or(eyre!("No end point"))?.0;
+    let start_coords = LatLng::try_from(&start_point)?;
+    let end_coords = LatLng::try_from(&end_point)?;
+    let start_address = nominatim_reverse_geocode(&start_point).await?.address;
+    let end_address = nominatim_reverse_geocode(&end_point).await?.address;
+    let (time_from_origin_to_start, time_form_end_to_origin) =
+        time_to_start_and_from_end(origin, start_coords, end_coords).await?;
+    Ok(model::ride::ProcessedRide {
+        id: ride.id,
+        name: ride.name,
+        start_address: start_address.into(),
+        end_address: end_address.into(),
+        total_distance: ride.total_distance,
+        time_from_origin_to_start: time_from_origin_to_start.num_seconds(),
+        time_from_end_to_origin: time_form_end_to_origin.num_seconds(),
+        start_point,
+        end_point,
+        geo_json: ride.geo_json,
+        ways: ride.ways,
+    })
 }

@@ -1,3 +1,3 @@
+pub mod dto;
 pub mod feature;
-pub mod nominatim;
-pub mod ride;
+pub mod model;

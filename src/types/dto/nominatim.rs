@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct NominatimPlace {
     pub osm_type: String,
-    pub place_id: usize,
+    pub place_id: u64,
     pub display_name: String,
     pub address: HashMap<String, String>,
     pub extratags: ExtraTags,
