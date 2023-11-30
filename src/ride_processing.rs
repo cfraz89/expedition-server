@@ -129,15 +129,26 @@ pub async fn time_to_start_and_from_end(
     Ok((origin_to_start, end_to_origin))
 }
 
-pub async fn process_ride(ride: model::ride::QueryRide, origin: LatLng) -> Result<ProcessedRide> {
+pub async fn process_ride(
+    ride: model::ride::QueryRide,
+    origin: Option<LatLng>,
+) -> Result<ProcessedRide> {
     let start_point = ride.start_point.ok_or(eyre!("No start point"))?.0;
     let end_point = ride.end_point.ok_or(eyre!("No end point"))?.0;
     let start_coords = LatLng::try_from(&start_point)?;
     let end_coords = LatLng::try_from(&end_point)?;
-    let (start_address, end_address, (time_from_origin_to_start, time_form_end_to_origin)) = try_join!(
+    let time_fut = async move {
+        if let Some(origin) = origin {
+            let res = time_to_start_and_from_end(origin, start_coords, end_coords).await?;
+            Ok(Some(res))
+        } else {
+            Ok(None)
+        }
+    };
+    let (start_address, end_address, times) = try_join!(
         nominatim_reverse_geocode(&start_point),
         nominatim_reverse_geocode(&end_point),
-        time_to_start_and_from_end(origin, start_coords, end_coords)
+        time_fut
     )?;
     Ok(model::ride::ProcessedRide {
         id: ride.id,
@@ -145,8 +156,8 @@ pub async fn process_ride(ride: model::ride::QueryRide, origin: LatLng) -> Resul
         start_address: start_address.address.into(),
         end_address: end_address.address.into(),
         total_distance: ride.total_distance,
-        time_from_origin_to_start: time_from_origin_to_start.num_seconds(),
-        time_from_end_to_origin: time_form_end_to_origin.num_seconds(),
+        time_from_origin_to_start: times.map(|t| t.0.num_seconds()),
+        time_from_end_to_origin: times.map(|t| t.1.num_seconds()),
         start_point,
         end_point,
         geo_json: ride.geo_json,

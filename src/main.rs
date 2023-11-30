@@ -20,7 +20,7 @@ use color_eyre::eyre::eyre;
 use futures::stream::TryStreamExt;
 use futures::{stream, StreamExt};
 use geojson::FeatureCollection;
-use google_maps::{GoogleMapsClient, LatLng};
+use google_maps::GoogleMapsClient;
 use net::response::{ResponseError, Result};
 use ride::create_ride;
 use ride_geo::IntoRideFeatureCollection;
@@ -29,7 +29,7 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::types::Json as sqlx_json;
 use tower_http::cors::CorsLayer;
 use tracing::{info, instrument};
-use types::dto;
+use types::dto::{self, geom::PartialLatLng};
 use types::model;
 
 use crate::clients::NOMINATIM_URL;
@@ -90,7 +90,7 @@ fn init_reqwest_client() -> color_eyre::Result<()> {
     Ok(())
 }
 
-async fn list_rides(Query(origin): Query<LatLng>) -> Result<Json<Vec<dto::ride::ListRide>>> {
+async fn list_rides(Query(origin): Query<PartialLatLng>) -> Result<Json<Vec<dto::ride::ListRide>>> {
     let rides = sqlx::query_as!(
         model::ride::QueryRide,
         r#"select 
@@ -110,7 +110,7 @@ async fn list_rides(Query(origin): Query<LatLng>) -> Result<Json<Vec<dto::ride::
         .map(|ride| {
             let origin = origin.clone();
             async move {
-                let processed_ride = process_ride(ride, origin).await?;
+                let processed_ride = process_ride(ride, origin.into()).await?;
                 Result::<dto::ride::ListRide>::Ok(dto::ride::ListRide {
                     id: processed_ride.id,
                     name: processed_ride.name,
@@ -131,7 +131,7 @@ async fn list_rides(Query(origin): Query<LatLng>) -> Result<Json<Vec<dto::ride::
 
 async fn get_ride_by_id(
     Path(ride_id): Path<i64>,
-    Query(origin): Query<LatLng>,
+    Query(origin): Query<PartialLatLng>,
 ) -> Result<Json<dto::ride::Ride>> {
     let option_ride = sqlx::query_as!(
         model::ride::QueryRide,
@@ -150,7 +150,7 @@ async fn get_ride_by_id(
     .fetch_optional(get_db_pool()?)
     .await?;
     let query_ride = option_ride.ok_or(ResponseError::not_found("No ride with this id"))?;
-    let processed_ride = process_ride(query_ride, origin).await?;
+    let processed_ride = process_ride(query_ride, origin.into()).await?;
     let ride = dto::ride::Ride {
         id: processed_ride.id,
         name: processed_ride.name,

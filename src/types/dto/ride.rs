@@ -13,8 +13,8 @@ pub struct ListRide {
     pub total_distance: BigDecimal,
     pub start_address: Json<HashMap<String, String>>,
     pub end_address: Json<HashMap<String, String>>,
-    pub time_from_origin_to_start: i64,
-    pub time_from_end_to_origin: i64,
+    pub time_from_origin_to_start: Option<i64>,
+    pub time_from_end_to_origin: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -26,6 +26,6 @@ pub struct Ride {
     pub total_distance: BigDecimal,
     pub start_address: Json<HashMap<String, String>>,
     pub end_address: Json<HashMap<String, String>>,
-    pub time_from_origin_to_start: i64,
-    pub time_from_end_to_origin: i64,
+    pub time_from_origin_to_start: Option<i64>,
+    pub time_from_end_to_origin: Option<i64>,
 }
