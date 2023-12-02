@@ -7,12 +7,12 @@ use geo::VincentyDistance;
 use geo_types::Point;
 use google_maps::{prelude::*, LatLng};
 use tokio::{sync::Mutex, try_join};
-use tracing::instrument;
+use tracing::{debug, instrument};
 
 use crate::{
     clients::{get_google_maps, get_nominatim_url, get_reqwest_client},
     types::{
-        dto::nominatim::NominatimPlace,
+        dto::nominatim::{NominatimDetailsPlace, NominatimPlace},
         model::{
             self,
             ride::{ProcessedRide, RideWay, WayPoint},
@@ -20,7 +20,7 @@ use crate::{
     },
 };
 
-#[instrument]
+#[instrument(ret)]
 pub async fn nominatim_reverse_geocode(point: &Point) -> Result<NominatimPlace> {
     let url = format!(
         "{base_url}/reverse?lat={lat}&lon={lon}&extratags=1&format=json",
@@ -32,7 +32,25 @@ pub async fn nominatim_reverse_geocode(point: &Point) -> Result<NominatimPlace> 
         .get(url)
         .send()
         .await?
+        .error_for_status()?
         .json::<NominatimPlace>()
+        .await?;
+    Ok(place)
+}
+
+#[instrument(ret)]
+pub async fn nominatim_get_place(osm_type: &str, osm_id: u64) -> Result<NominatimDetailsPlace> {
+    let url = format!(
+        "{base_url}/details?osmtype={osm_type}&osmid={osm_id}&addressdetails=1&format=json",
+        base_url = get_nominatim_url()?
+    );
+    debug!(url);
+    let place = get_reqwest_client()?
+        .get(url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<NominatimDetailsPlace>()
         .await?;
     Ok(place)
 }
@@ -51,8 +69,8 @@ pub async fn ride_ways(
                 let place = nominatim_reverse_geocode(&point).await?;
                 if place.osm_type == "way" {
                     let mut ways = ways.lock().await;
-                    let way = ways.entry(place.place_id).or_insert(RideWay {
-                        place_id: place.place_id,
+                    let way = ways.entry(place.osm_id).or_insert(RideWay {
+                        osm_id: place.osm_id,
                         distance: 0.0,
                         points: Vec::new(),
                     });
@@ -67,7 +85,7 @@ pub async fn ride_ways(
         .ok_or(eyre!("Couldnt unwrap arc!"))?
         .into_inner();
     //Now calculate the distance of each place.
-    ways.iter_mut().for_each(|(_place_id, way)| {
+    ways.values_mut().for_each(|way| {
         way.points.sort_by_key(|p| p.seq);
         way.distance = way
             .points

@@ -43,14 +43,14 @@ pub struct ProcessedRide {
     pub time_from_end_to_origin: Option<i64>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct RideWay {
-    pub place_id: u64,
+    pub osm_id: u64,
     pub distance: f64,
     pub points: Vec<WayPoint>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct WayPoint {
     pub seq: usize,
     pub point: Point,

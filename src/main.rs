@@ -9,6 +9,8 @@ mod ride_geo;
 mod ride_processing;
 mod types;
 
+use std::sync::Arc;
+
 use axum::{
     extract::{Multipart, Path, Query},
     http::StatusCode,
@@ -24,7 +26,7 @@ use google_maps::GoogleMapsClient;
 use net::response::{ResponseError, Result};
 use ride::create_ride;
 use ride_geo::IntoRideFeatureCollection;
-use ride_processing::process_ride;
+use ride_processing::{nominatim_get_place, process_ride};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::types::Json as sqlx_json;
 use tower_http::cors::CorsLayer;
@@ -111,6 +113,7 @@ async fn list_rides(Query(origin): Query<PartialLatLng>) -> Result<Json<Vec<dto:
             let origin = origin.clone();
             async move {
                 let processed_ride = process_ride(ride, origin.into()).await?;
+
                 Result::<dto::ride::ListRide>::Ok(dto::ride::ListRide {
                     id: processed_ride.id,
                     name: processed_ride.name,
@@ -140,7 +143,7 @@ async fn get_ride_by_id(
         name,
         total_distance,
         geo_json as "geo_json: sqlx_json<geojson::GeoJson>",
-        jsonb_path_query_array(ways, '$[0 to 4]') as "ways: sqlx_json<Vec<model::ride::RideWay>>",
+        ways as "ways: sqlx_json<Vec<model::ride::RideWay>>",
         jsonb_path_query(geo_json, '$[*].features ? (@.id == "start").geometry.coordinates') as "start_point: _",
         jsonb_path_query(geo_json, '$[*].features ? (@.id == "end").geometry.coordinates') as "end_point: _"
         from rides
@@ -149,14 +152,38 @@ async fn get_ride_by_id(
     )
     .fetch_optional(get_db_pool()?)
     .await?;
-    let query_ride = option_ride.ok_or(ResponseError::not_found("No ride with this id"))?;
-    let processed_ride = process_ride(query_ride, origin.into()).await?;
+    let query_ride = Arc::new(option_ride.ok_or(ResponseError::not_found("No ride with this id"))?);
+    let ways: Vec<dto::ride::RideWay> = stream::iter(
+        query_ride
+            .clone()
+            .ways
+            .clone()
+            .ok_or(eyre!("No ways!"))?
+            .0
+            .into_iter(),
+    )
+    .map(|way| async move {
+        let place = nominatim_get_place("W", way.osm_id).await?;
+        Result::<dto::ride::RideWay>::Ok(dto::ride::RideWay {
+            distance: way.distance,
+            points: way.points,
+            place,
+        })
+    })
+    .buffered(10)
+    .try_collect()
+    .await?;
+    let processed_ride = process_ride(
+        Arc::try_unwrap(query_ride).map_err(|_| eyre!("Couldnt unwrap queryride"))?,
+        origin.into(),
+    )
+    .await?;
     let ride = dto::ride::Ride {
         id: processed_ride.id,
         name: processed_ride.name,
         total_distance: processed_ride.total_distance,
         geo_json: processed_ride.geo_json.ok_or(eyre!("No geo_json!"))?,
-        ways: processed_ride.ways.ok_or(eyre!("No ways!"))?,
+        ways: ways.into(),
         start_address: processed_ride.start_address.into(),
         end_address: processed_ride.end_address.into(),
         time_from_origin_to_start: processed_ride.time_from_origin_to_start,
