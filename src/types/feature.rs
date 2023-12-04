@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct FeatureProperties {
     pub distance: f64,
+    pub name: Option<String>,
 }
 
 /// For converting FeatureProperties to geojson properties

@@ -1,5 +1,6 @@
 #![feature(async_closure)]
 #![feature(iter_map_windows)]
+#![feature(iter_intersperse)]
 
 mod clients;
 mod import;
@@ -25,16 +26,14 @@ use geojson::FeatureCollection;
 use google_maps::GoogleMapsClient;
 use net::response::{ResponseError, Result};
 use ride::create_ride;
-use ride_geo::IntoRideFeatureCollection;
-use ride_processing::{nominatim_get_place, process_ride};
+use ride_processing::{aggregate_surface, nominatim_get_place, process_ride};
 use sqlx::postgres::PgPoolOptions;
-use sqlx::types::Json as sqlx_json;
 use tower_http::cors::CorsLayer;
 use tracing::{info, instrument};
 use types::dto::{self, geom::PartialLatLng};
 use types::model;
 
-use crate::clients::NOMINATIM_URL;
+use crate::{clients::NOMINATIM_URL, import::gpx::AsRideFeatureCollection};
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -136,14 +135,15 @@ async fn get_ride_by_id(
     Path(ride_id): Path<i64>,
     Query(origin): Query<PartialLatLng>,
 ) -> Result<Json<dto::ride::Ride>> {
+    // jsonb_path_query_array(ways, '$[0 to 9]') as "ways: sqlx_json<Vec<model::ride::RideWay>>",
     let option_ride = sqlx::query_as!(
         model::ride::QueryRide,
         r#"select
         id,
         name,
         total_distance,
-        geo_json as "geo_json: sqlx_json<geojson::GeoJson>",
-        ways as "ways: sqlx_json<Vec<model::ride::RideWay>>",
+        geo_json as "geo_json: _",
+        ways as "ways: _",
         jsonb_path_query(geo_json, '$[*].features ? (@.id == "start").geometry.coordinates') as "start_point: _",
         jsonb_path_query(geo_json, '$[*].features ? (@.id == "end").geometry.coordinates') as "end_point: _"
         from rides
@@ -163,7 +163,11 @@ async fn get_ride_by_id(
             .into_iter(),
     )
     .map(|way| async move {
-        let place = nominatim_get_place("W", way.osm_id).await?;
+        let mut place = nominatim_get_place("W", way.osm_id).await?;
+        place.extratags.surface = place
+            .extratags
+            .surface
+            .map(|s| aggregate_surface(&s).to_string());
         Result::<dto::ride::RideWay>::Ok(dto::ride::RideWay {
             distance: way.distance,
             points: way.points,
@@ -174,7 +178,7 @@ async fn get_ride_by_id(
     .try_collect()
     .await?;
     let processed_ride = process_ride(
-        Arc::try_unwrap(query_ride).map_err(|_| eyre!("Couldnt unwrap queryride"))?,
+        Arc::try_unwrap(query_ride).expect("Couldnt unwrap queryride"),
         origin.into(),
     )
     .await?;
@@ -209,8 +213,9 @@ async fn delete_ride_by_id(Path(ride_id): Path<i64>) -> Result<()> {
 #[instrument(skip(multipart))]
 #[axum::debug_handler]
 async fn import_gpx(mut multipart: Multipart) -> Result<()> {
-    let mut geo_feature_collection_opt: Option<FeatureCollection> = None;
     let mut ride_name_opt: Option<String> = None;
+    let mut geo_feature_collection_opt: Option<FeatureCollection> = None;
+    // let mut ride_name_opt: Option<String> = None;
     while let Some(field) = multipart.next_field().await? {
         let name = field.name().ok_or(ResponseError::internal_server_error(
             "No name on form field",
@@ -219,7 +224,7 @@ async fn import_gpx(mut multipart: Multipart) -> Result<()> {
             "ride_name" => ride_name_opt = Some(field.text().await?),
             "gpx" => {
                 let gpx_obj = gpx::read(field.text().await?.as_bytes())?;
-                geo_feature_collection_opt = Some(gpx_obj.into_ride_feature_collection()?);
+                geo_feature_collection_opt = Some(gpx_obj.as_ride_feature_collection()?);
             }
             _ => continue,
         }
@@ -232,7 +237,25 @@ async fn import_gpx(mut multipart: Multipart) -> Result<()> {
         StatusCode::BAD_REQUEST,
         "gpx not provided",
     ))?;
-    let ride = create_ride(ride_name, geo_feature_collection).await?;
+    let ride = create_ride(
+        geo_feature_collection
+            .features
+            .iter()
+            .map(|feature| -> Result<&str> {
+                match feature.property("name") {
+                    Some(name) => name
+                        .as_str()
+                        .ok_or(ResponseError::bad_request("name is not a string")),
+                    None => Err(ResponseError::bad_request("Unnamed feature")),
+                }
+            })
+            .collect::<Result<Vec<&str>>>()?
+            .into_iter()
+            .intersperse(" / ")
+            .collect(),
+        geo_feature_collection,
+    )
+    .await?;
     sqlx::query!(
         r#"insert into rides (name, geo_json, total_distance, ways)
         values ($1, $2, $3, $4)"#,

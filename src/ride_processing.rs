@@ -7,7 +7,7 @@ use geo::VincentyDistance;
 use geo_types::Point;
 use google_maps::{prelude::*, LatLng};
 use tokio::{sync::Mutex, try_join};
-use tracing::{debug, instrument};
+use tracing::{debug, info, instrument};
 
 use crate::{
     clients::{get_google_maps, get_nominatim_url, get_reqwest_client},
@@ -20,10 +20,9 @@ use crate::{
     },
 };
 
-#[instrument(ret)]
 pub async fn nominatim_reverse_geocode(point: &Point) -> Result<NominatimPlace> {
     let url = format!(
-        "{base_url}/reverse?lat={lat}&lon={lon}&extratags=1&format=json",
+        "{base_url}/reverse?lat={lat}&lon={lon}&extratags=1&format=jsonv2",
         base_url = get_nominatim_url()?,
         lat = point.y(),
         lon = point.x()
@@ -38,13 +37,11 @@ pub async fn nominatim_reverse_geocode(point: &Point) -> Result<NominatimPlace> 
     Ok(place)
 }
 
-#[instrument(ret)]
 pub async fn nominatim_get_place(osm_type: &str, osm_id: u64) -> Result<NominatimDetailsPlace> {
     let url = format!(
         "{base_url}/details?osmtype={osm_type}&osmid={osm_id}&addressdetails=1&format=json",
         base_url = get_nominatim_url()?
     );
-    debug!(url);
     let place = get_reqwest_client()?
         .get(url)
         .send()
@@ -61,20 +58,24 @@ pub async fn ride_ways(
     total_distance: &BigDecimal,
 ) -> Result<Vec<RideWay>> {
     //In parallel, get places from nominatim corresponding to coordinates, group them by place id
-    let ways = Arc::new(Mutex::new(HashMap::<u64, RideWay>::new()));
+    let ways = Arc::new(Mutex::new(HashMap::<String, RideWay>::new()));
     stream::iter(route.enumerate().map(Ok))
         .try_for_each_concurrent(50, |(seq, point)| {
             let ways = ways.clone();
             async move {
                 let place = nominatim_reverse_geocode(&point).await?;
-                if place.osm_type == "way" {
-                    let mut ways = ways.lock().await;
-                    let way = ways.entry(place.osm_id).or_insert(RideWay {
-                        osm_id: place.osm_id,
-                        distance: 0.0,
-                        points: Vec::new(),
-                    });
-                    way.points.push(WayPoint { seq, point })
+                if place.osm_type == "way" && place.category == Some(String::from("highway")) {
+                    if let Some(place_name) = place.name {
+                        let mut ways = ways.lock().await;
+                        //We use name, not id, as the hash to group by, as the same road can have multiple place ids
+                        let way = ways.entry(place_name).or_insert(RideWay {
+                            seq: seq.try_into().expect("Couldn't convert usize to u64"),
+                            osm_id: place.osm_id,
+                            distance: 0.0,
+                            points: Vec::new(),
+                        });
+                        way.points.push(WayPoint { seq, point })
+                    }
                 }
                 Ok::<(), color_eyre::eyre::Error>(())
             }
@@ -82,7 +83,7 @@ pub async fn ride_ways(
         .await?;
     //Dont need our mutex anymore.
     let mut ways = Arc::into_inner(ways)
-        .ok_or(eyre!("Couldnt unwrap arc!"))?
+        .expect("Couldnt unwrap arc!")
         .into_inner();
     //Now calculate the distance of each place.
     ways.values_mut().for_each(|way| {
@@ -94,11 +95,12 @@ pub async fn ride_ways(
             .sum();
     });
     let mut ways_vec = ways.into_values().collect::<Vec<RideWay>>();
-    ways_vec.sort_by(|way1, way2| way1.distance.total_cmp(&way2.distance).reverse());
+    // ways_vec.sort_by(|way1, way2| way1.distance.total_cmp(&way2.distance).reverse());
+    ways_vec.sort_unstable_by_key(|way| way.seq);
     Ok(ways_vec)
 }
 
-fn aggregate_surface(surface: &str) -> &str {
+pub fn aggregate_surface(surface: &str) -> &str {
     match surface {
         "gravel" | "unpaved" | "dirt" | "fine_gravel" | "rock" => "dirt",
         "asphalt" | "paved" => "tarmac",
