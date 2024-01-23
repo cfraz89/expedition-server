@@ -1,0 +1,3 @@
+upload loop = xh post --form localhost:3000/gpx "gpx@/home/chris/Downloads/Laguna Wollombi Loop.GPX" ride_name="Laguna Wollombi Loop" 
+
+nerdctl --namespace=k8s.io load <OCI>, nerdctl --namespace=k8s.io tag <OLD> <NEW>, nerdctl --namespace=k8s.io push <IMAGE>
